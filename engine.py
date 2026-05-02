@@ -2,7 +2,9 @@ from typing import TypedDict, List, Dict
 from dotenv import load_dotenv
 from langchain_groq import ChatGroq
 from langgraph.graph import StateGraph, END
+from pypdf import PdfReader
 import re
+
 
 load_dotenv()
 
@@ -13,6 +15,18 @@ llm = ChatGroq(
     model="llama-3.3-70b-versatile",
     temperature=0
 )
+#----------------
+# pdf reader
+#----------------
+def extract_text_from_pdf(file):
+    reader = PdfReader(file)
+    text = ""
+
+    for page in reader.pages:
+        text += page.extract_text() or ""
+
+    return text
+
 
 # -------------------
 # State (FINAL CLEAN)
