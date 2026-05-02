@@ -19,8 +19,9 @@ llm = ChatGroq(
 # -------------------
 class ResumeState(TypedDict):
     resume_text: str
+    job_description: str
     analysis: str
-    score: int
+    fit_score: int
     result: str
 
 # -------------------
@@ -35,33 +36,43 @@ def read_resume(state):
 # -------------------
 # Node 2
 # -------------------
-def analyze_resume(state):
+def analyze_match(state):
     prompt = f"""
-    Analyze this resume and give:
-    Strengths
-    Weaknesses
-    Score out of 100
+    Compare Resume and Job Description.
+
+    Output:
+    1. Match strengths
+    2. Missing skills
+    3. Fit score (0-100)
 
     Resume:
     {state["resume_text"]}
 
-    Format:
-    Score: number
-    Strengths: ...
-    Weaknesses: ...
+    Job:
+    {state["job_description"]}
     """
 
     result = llm.invoke(prompt)
     text = result.content
 
-    match = re.search(r"Score:\s*(\d+)", text)
+    # extract score
+    import re
+    match = re.search(r"(\d{1,3})", text)
     score = int(match.group(1)) if match else 50
 
     return {
         "analysis": text,
-        "score": score
+        "fit_score": score
     }
 
+# -------------------
+# Node 3 Job Reader
+# -------------------
+def read_job(state):
+    with open("job.txt", "r", encoding="utf-8") as f:
+        job = f.read()
+
+    return {"job_description": job}
 # -------------------
 # Strong Resume Path
 # -------------------
@@ -94,6 +105,31 @@ def improve_resume(state):
     return {"result": result.content}
 
 # -------------------
+# Decision Logic
+# -------------------
+def route(state):
+    if state["fit_score"] >= 70:
+        return "good_fit"
+    return "bad_fit" 
+# -------------------
+# Good Fit Path
+# -------------------  
+def improve_for_job(state):
+    prompt = f"""
+    Improve this resume for the job.
+
+    Resume:
+    {state["resume_text"]}
+
+    Job:
+    {state["job_description"]}
+    """
+
+    result = llm.invoke(prompt)
+
+    return {"result": result.content}
+
+# -------------------
 # Router
 # -------------------
 def route_resume(state):
@@ -107,25 +143,25 @@ def route_resume(state):
 builder = StateGraph(ResumeState)
 
 builder.add_node("read_resume", read_resume)
-builder.add_node("analyze_resume", analyze_resume)
-builder.add_node("suggest_roles", suggest_roles)
-builder.add_node("improve_resume", improve_resume)
+builder.add_node("read_job", read_job)
+builder.add_node("analyze_match", analyze_match)
+builder.add_node("improve_for_job", improve_for_job)
 
 builder.set_entry_point("read_resume")
 
-builder.add_edge("read_resume", "analyze_resume")
+builder.add_edge("read_resume", "read_job")
+builder.add_edge("read_job", "analyze_match")
 
 builder.add_conditional_edges(
-    "analyze_resume",
-    route_resume,
+    "analyze_match",
+    route,
     {
-        "strong": "suggest_roles",
-        "weak": "improve_resume"
+        "good_fit": "improve_for_job",
+        "bad_fit": "improve_for_job"
     }
 )
 
-builder.add_edge("suggest_roles", END)
-builder.add_edge("improve_resume", END)
+builder.add_edge("improve_for_job", END)
 
 graph = builder.compile()
 
@@ -133,10 +169,6 @@ graph = builder.compile()
 # Run
 # -------------------
 result = graph.invoke({})
-
-print("\nRESUME SCORE:", result["score"])
-print("\nANALYSIS:\n")
 print(result["analysis"])
-
-print("\nFINAL RESULT:\n")
+print(result["fit_score"])
 print(result["result"])
