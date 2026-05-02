@@ -34,8 +34,10 @@ class ResumeState(TypedDict):
     resume_text: str
     jobs: list
     scored_jobs: list
-    ranked_jobs: list
-    result: str
+    best_job: dict
+    tailored_resume: str
+    cover_letter: str
+    approved: bool
 
 # -------------------
 # Node 1
@@ -99,7 +101,123 @@ def suggest_roles(state):
     result = llm.invoke(prompt)
 
     return {"result": result.content}
+#-------------------
+#Select Best Job
+#-------------------
+def select_best_job(state):
+    sorted_jobs = sorted(
+        state["scored_jobs"],
+        key=lambda x: x["score"],
+        reverse=True
+    )
 
+    return {
+        "best_job": sorted_jobs[0]
+    }
+#--------------------
+#Tailor Resume
+#--------------------
+def generate_resume(state):
+    job = state["best_job"]
+
+    prompt = f"""
+    Rewrite this resume for the job below.
+
+    Resume:
+    {state["resume_text"]}
+
+    Job:
+    {job["title"]} - {job["reason"]}
+
+    Make it:
+    - ATS optimized
+    - keyword rich
+    - achievement focused
+    """
+
+    result = llm.invoke(prompt)
+
+    return {"tailored_resume": result.content}
+#--------------------
+#Generate Cover Letter
+#--------------------
+def generate_cover_letter(state):
+    job = state["best_job"]
+
+    prompt = f"""
+    Write a professional cover letter for:
+
+    Job:
+    {job["title"]}
+
+    Based on resume:
+    {state["tailored_resume"]}
+    """
+
+    result = llm.invoke(prompt)
+
+    return {"cover_letter": result.content}
+#--------------------
+#Human Approval
+#--------------------
+def human_approval(state):
+    print("\n--- TAILORED RESUME ---\n")
+    print(state["tailored_resume"])
+
+    print("\n--- COVER LETTER ---\n")
+    print(state["cover_letter"])
+
+    choice = input("\nApprove output? (yes/no): ")
+
+    return {"approved": choice.lower() == "yes"}
+#--------------------
+#Retry Logic
+#--------------------
+def retry_generation(state):
+    prompt = f"""
+    Improve resume and cover letter.
+    User rejected previous version.
+
+    Make it stronger and more professional.
+    """
+
+    result = llm.invoke(prompt)
+
+    return {
+        "tailored_resume": result.content,
+        "cover_letter": result.content
+    }
+#--------------------
+#Router Approval Logic
+#--------------------
+def approval_route(state):
+    if state["approved"]:
+        return "end"
+    return "retry"
+#--------------------
+#Route for final approval
+#--------------------
+def final_route(state):
+    if state["final_approved"]:
+        return "end"
+    else:
+        return "retry_final"
+#--------------------
+#Final Retry
+#--------------------
+def final_retry(state):
+    prompt = f"""
+    Final improvements.
+    User rejected previous version.
+    Make it perfect.
+    """
+
+    result = llm.invoke(prompt)
+
+    return {
+        "tailored_resume": result.content,
+        "cover_letter": result.content
+    }
 #--------------------
 #Resume Improvement
 #--------------------
@@ -177,25 +295,7 @@ def rank_jobs(state):
         "ranked_jobs": top_jobs,
         "result": result_text
     }
-#---------------------
-#Human Approval
-#---------------------
-def human_approval(state):
-    print("\n--- IMPROVED RESUME ---\n")
-    print(state["improved_resume"])
 
-    choice = input("\nApprove this resume? (yes/no): ")
-
-    return {
-        "approved": choice.lower() == "yes"
-    }
-#-------------------
-#Router Logic
-# -------------------
-def approval_route(state):
-    if state["approved"]:
-        return "end"
-    return "retry"
 #-------------------
 # Retry Improvement
 #-------------------
@@ -276,14 +376,31 @@ builder = StateGraph(ResumeState)
 builder.add_node("read_resume", read_resume)
 builder.add_node("load_jobs", load_jobs)
 builder.add_node("score_jobs", score_jobs)
-builder.add_node("rank_jobs", rank_jobs)
+builder.add_node("select_best_job", select_best_job)
+builder.add_node("generate_resume", generate_resume)
+builder.add_node("generate_cover_letter", generate_cover_letter)
+builder.add_node("human_approval", human_approval)
+builder.add_node("retry_generation", retry_generation)
 
 builder.set_entry_point("read_resume")
 
 builder.add_edge("read_resume", "load_jobs")
 builder.add_edge("load_jobs", "score_jobs")
-builder.add_edge("score_jobs", "rank_jobs")
-builder.add_edge("rank_jobs", END)
+builder.add_edge("score_jobs", "select_best_job")
+builder.add_edge("select_best_job", "generate_resume")
+builder.add_edge("generate_resume", "generate_cover_letter")
+builder.add_edge("generate_cover_letter", "human_approval")
+
+builder.add_conditional_edges(
+    "human_approval",
+    approval_route,
+    {
+        "end": END,
+        "retry": "retry_generation"
+    }
+)
+
+builder.add_edge("retry_generation", "human_approval")
 
 graph = builder.compile()
 
@@ -291,6 +408,3 @@ graph = builder.compile()
 # Run
 # -------------------
 result = graph.invoke({})
-
-print("\nTOP MATCHING JOBS:\n")
-print(result["result"])
