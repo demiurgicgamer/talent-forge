@@ -3,7 +3,8 @@ from dotenv import load_dotenv
 from langchain_groq import ChatGroq
 from langgraph.graph import StateGraph, END
 from pypdf import PdfReader
-import re
+from job_api import fetch_jobs
+import json, re
 
 
 load_dotenv()
@@ -15,6 +16,15 @@ llm = ChatGroq(
     model="llama-3.3-70b-versatile",
     temperature=0
 )
+
+#--------------------
+# fetch jobs
+#--------------------
+from job_api import fetch_jobs
+
+def load_jobs(state):
+    jobs = fetch_jobs(query="XR Developer", location="Canada")
+    return {"jobs": jobs}
 #----------------
 # pdf reader
 #----------------
@@ -57,7 +67,25 @@ def load_jobs(state):
 # -------------------
 def read_resume(state):
     return {"resume_text": state["resume_text"]}
+#--------------------
+#Filter Jobs
+#--------------------
+def filter_jobs(state):
+    keywords = [
+        "xr", "unity", "unreal", "ar", "vr",
+        "ai", "python", "c#", "simulation", "engineer", "developer"
+    ]
 
+    filtered = []
+
+    for job in state["jobs"]:
+        text = (job["title"] + " " + job["description"]).lower()
+
+        if any(k in text for k in keywords):
+            filtered.append(job)
+
+    return {"jobs": filtered}
+    
 # -------------------
 # Score Jobs
 # -------------------
@@ -65,34 +93,93 @@ def score_jobs(state):
     results = []
 
     for job in state["jobs"]:
+
         prompt = f"""
-        Compare resume and job.
+You are an expert AI recruiter.
 
-        Resume:
-        {state["resume_text"]}
+Return ONLY valid JSON.
 
-        Job:
-        {job["title"]} - {job["description"]}
+Schema:
+{{
+  "score": number,
+  "skill_match": number,
+  "domain_match": number,
+  "tools_match": number,
+  "experience_match": number,
+  "summary": "max 2 lines"
+}}
 
-        Return:
-        Score (0-100)
-        Reason
-        """
+Rules:
+Skill: 0-40
+Domain: 0-30
+Tools: 0-20
+Experience: 0-10
+
+Resume:
+{state["resume_text"]}
+
+Job:
+{job["title"]} - {job["description"]}
+"""
 
         response = llm.invoke(prompt).content
-
-        match = re.search(r"(\d{1,3})", response)
-        score = int(match.group(1)) if match else 50
+        data = safe_parse_json(response)
 
         results.append({
             "title": job["title"],
             "description": job["description"],
-            "score": score,
-            "reason": response
+            "score": data.get("score", 50),
+            "details": {
+                "skill_match": data.get("skill_match", 0),
+                "domain_match": data.get("domain_match", 0),
+                "tools_match": data.get("tools_match", 0),
+                "experience_match": data.get("experience_match", 0),
+                "summary": data.get("summary", "")
+            }
         })
 
     return {"scored_jobs": results}
+#-------------------
+# parse llm json
+#--------------------
+def safe_parse_json(text):
+    try:
+        match = re.search(r"\{.*\}", text, re.DOTALL)
+        if not match:
+            return {"score": 50, "summary": "Parse failed"}
 
+        data = json.loads(match.group())
+
+        # safety clamp
+        data["score"] = max(0, min(100, int(data.get("score", 50))))
+
+        return data
+
+    except:
+        return {
+            "score": 50,
+            "skill_match": 10,
+            "domain_match": 10,
+            "tools_match": 10,
+            "experience_match": 10,
+            "summary": "Fallback parsing used"
+        }
+#--------------------
+# Smarter Ranking
+#--------------------
+def rank_jobs(state):
+    sorted_jobs = sorted(
+        state["scored_jobs"],
+        key=lambda x: x["score"],
+        reverse=True
+    )
+
+    top_jobs = sorted_jobs[:3]
+
+    return {
+        "best_job": top_jobs[0],
+        "ranked_jobs": top_jobs
+    }
 # -------------------
 # Select Best Job
 # -------------------
@@ -183,6 +270,7 @@ builder = StateGraph(ResumeState)
 
 builder.add_node("read_resume", read_resume)
 builder.add_node("load_jobs", load_jobs)
+builder.add_node("filter_jobs", filter_jobs)
 builder.add_node("score_jobs", score_jobs)
 builder.add_node("select_best_job", select_best_job)
 builder.add_node("generate_resume", generate_resume)
@@ -193,7 +281,8 @@ builder.add_node("retry_generation", retry_generation)
 builder.set_entry_point("read_resume")
 
 builder.add_edge("read_resume", "load_jobs")
-builder.add_edge("load_jobs", "score_jobs")
+builder.add_edge("load_jobs", "filter_jobs")
+builder.add_edge("filter_jobs", "score_jobs")
 builder.add_edge("score_jobs", "select_best_job")
 builder.add_edge("select_best_job", "generate_resume")
 builder.add_edge("generate_resume", "generate_cover_letter")
