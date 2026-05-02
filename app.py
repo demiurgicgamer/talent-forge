@@ -7,6 +7,19 @@ import re
 load_dotenv()
 
 # -------------------
+# Sample Jobs for Testing
+# -------------------
+def load_jobs(state):
+    jobs = [
+        {"title": "XR Developer", "description": "Unity, AR/VR, C#, AI integration"},
+        {"title": "AI Engineer", "description": "LLMs, Python, APIs, LangChain"},
+        {"title": "Game Developer", "description": "Unreal, C++, multiplayer systems"},
+        {"title": "Simulation Engineer", "description": "3D simulation, physics, XR systems"},
+    ]
+
+    return {"jobs": jobs}
+
+# -------------------
 # LLM
 # -------------------
 llm = ChatGroq(
@@ -19,11 +32,10 @@ llm = ChatGroq(
 # -------------------
 class ResumeState(TypedDict):
     resume_text: str
-    job_description: str
-    analysis: str
-    fit_score: int
-    improved_resume: str
-    approved: bool
+    jobs: list
+    scored_jobs: list
+    ranked_jobs: list
+    result: str
 
 # -------------------
 # Node 1
@@ -110,6 +122,61 @@ def improve_resume(state):
     result = llm.invoke(prompt)
 
     return {"improved_resume": result.content}
+#-------------------
+#Score Each Job
+#-------------------
+def score_jobs(state):
+    results = []
+
+    for job in state["jobs"]:
+        prompt = f"""
+        Compare resume and job.
+
+        Resume:
+        {state["resume_text"]}
+
+        Job:
+        {job["title"]} - {job["description"]}
+
+        Return:
+        Score (0-100)
+        Reason
+        """
+
+        response = llm.invoke(prompt).content
+
+        import re
+        match = re.search(r"(\d{1,3})", response)
+        score = int(match.group(1)) if match else 50
+
+        results.append({
+            "title": job["title"],
+            "score": score,
+            "reason": response
+        })
+
+    return {"scored_jobs": results}
+#---------------------
+#Rank Jobs
+#---------------------
+def rank_jobs(state):
+    sorted_jobs = sorted(
+        state["scored_jobs"],
+        key=lambda x: x["score"],
+        reverse=True
+    )
+
+    top_jobs = sorted_jobs[:3]
+
+    result_text = "\n".join([
+        f"{j['title']} - {j['score']}"
+        for j in top_jobs
+    ])
+
+    return {
+        "ranked_jobs": top_jobs,
+        "result": result_text
+    }
 #---------------------
 #Human Approval
 #---------------------
@@ -207,29 +274,16 @@ def route_resume(state):
 builder = StateGraph(ResumeState)
 
 builder.add_node("read_resume", read_resume)
-builder.add_node("read_job", read_job)
-builder.add_node("analyze_match", analyze_match)
-builder.add_node("improve_resume", improve_resume)
-builder.add_node("human_approval", human_approval)
-builder.add_node("retry_improvement", retry_improvement)
+builder.add_node("load_jobs", load_jobs)
+builder.add_node("score_jobs", score_jobs)
+builder.add_node("rank_jobs", rank_jobs)
 
 builder.set_entry_point("read_resume")
 
-builder.add_edge("read_resume", "read_job")
-builder.add_edge("read_job", "analyze_match")
-builder.add_edge("analyze_match", "improve_resume")
-builder.add_edge("improve_resume", "human_approval")
-
-builder.add_conditional_edges(
-    "human_approval",
-    approval_route,
-    {
-        "end": END,
-        "retry": "retry_improvement"
-    }
-)
-
-builder.add_edge("retry_improvement", "human_approval")
+builder.add_edge("read_resume", "load_jobs")
+builder.add_edge("load_jobs", "score_jobs")
+builder.add_edge("score_jobs", "rank_jobs")
+builder.add_edge("rank_jobs", END)
 
 graph = builder.compile()
 
@@ -237,6 +291,6 @@ graph = builder.compile()
 # Run
 # -------------------
 result = graph.invoke({})
-print(result["analysis"])
-print(result["fit_score"])
-print(result.get("improved_resume", ""))
+
+print("\nTOP MATCHING JOBS:\n")
+print(result["result"])
