@@ -22,7 +22,8 @@ class ResumeState(TypedDict):
     job_description: str
     analysis: str
     fit_score: int
-    result: str
+    improved_resume: str
+    approved: bool
 
 # -------------------
 # Node 1
@@ -87,10 +88,73 @@ def suggest_roles(state):
 
     return {"result": result.content}
 
+#--------------------
+#Resume Improvement
+#--------------------
+def improve_resume(state):
+    prompt = f"""
+    Improve this resume for the job.
+
+    Resume:
+    {state["resume_text"]}
+
+    Job:
+    {state["job_description"]}
+
+    Focus:
+    - ATS optimization
+    - keyword matching
+    - clarity
+    """
+
+    result = llm.invoke(prompt)
+
+    return {"improved_resume": result.content}
+#---------------------
+#Human Approval
+#---------------------
+def human_approval(state):
+    print("\n--- IMPROVED RESUME ---\n")
+    print(state["improved_resume"])
+
+    choice = input("\nApprove this resume? (yes/no): ")
+
+    return {
+        "approved": choice.lower() == "yes"
+    }
+#-------------------
+#Router Logic
+# -------------------
+def approval_route(state):
+    if state["approved"]:
+        return "end"
+    return "retry"
+#-------------------
+# Retry Improvement
+#-------------------
+def retry_improvement(state):
+    prompt = f"""
+    Improve again. User rejected previous version.
+
+    Make it more:
+    - clear
+    - stronger impact
+    - better ATS keywords
+
+    Resume:
+    {state["resume_text"]}
+
+    Job:
+    {state["job_description"]}
+    """
+
+    result = llm.invoke(prompt)
+
+    return {"improved_resume": result.content}
 # -------------------
 # Weak Resume Path
 # -------------------
-def improve_resume(state):
+def improve_weak_resume(state):
     prompt = f"""
     This resume scored low.
 
@@ -145,23 +209,27 @@ builder = StateGraph(ResumeState)
 builder.add_node("read_resume", read_resume)
 builder.add_node("read_job", read_job)
 builder.add_node("analyze_match", analyze_match)
-builder.add_node("improve_for_job", improve_for_job)
+builder.add_node("improve_resume", improve_resume)
+builder.add_node("human_approval", human_approval)
+builder.add_node("retry_improvement", retry_improvement)
 
 builder.set_entry_point("read_resume")
 
 builder.add_edge("read_resume", "read_job")
 builder.add_edge("read_job", "analyze_match")
+builder.add_edge("analyze_match", "improve_resume")
+builder.add_edge("improve_resume", "human_approval")
 
 builder.add_conditional_edges(
-    "analyze_match",
-    route,
+    "human_approval",
+    approval_route,
     {
-        "good_fit": "improve_for_job",
-        "bad_fit": "improve_for_job"
+        "end": END,
+        "retry": "retry_improvement"
     }
 )
 
-builder.add_edge("improve_for_job", END)
+builder.add_edge("retry_improvement", "human_approval")
 
 graph = builder.compile()
 
@@ -171,4 +239,4 @@ graph = builder.compile()
 result = graph.invoke({})
 print(result["analysis"])
 print(result["fit_score"])
-print(result["result"])
+print(result.get("improved_resume", ""))
