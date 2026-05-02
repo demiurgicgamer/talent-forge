@@ -52,7 +52,7 @@ if st.button("🚀 Run AI Career Agent"):
         reverse=True
     )
 
-    for job in ranked_jobs[:5]:
+    for idx, job in enumerate(ranked_jobs[:5]):
 
         with st.container():
             st.markdown(f"### {job['title']}")
@@ -64,9 +64,19 @@ if st.button("🚀 Run AI Career Agent"):
                 st.metric("Score", job["score"])
 
             with col2:
-                st.markdown(
-                    f"[🚀 Apply Now]({job.get('apply_url', '#')})"
-                )
+                apply_url = job.get("apply_url")
+
+                if apply_url and apply_url != "#":
+                    st.markdown(
+                        f'<a href="{apply_url}" target="_blank">🚀 Apply Now</a>',
+                        unsafe_allow_html=True
+                    )
+                else:
+                    st.button(
+                        "🚀 Apply Now (No Link)",
+                        disabled=True,
+                        key=f"apply_disabled_{idx}"
+                    )
 
             if job.get("details", {}).get("summary"):
                 st.info(job["details"]["summary"])
@@ -89,7 +99,7 @@ if st.button("🚀 Run AI Career Agent"):
             for j in ranked
         ])
 
-        st.dataframe(df, use_container_width=True)
+        st.dataframe(df, width='stretch')
 
     # -------------------
     # GENERATED CONTENT
