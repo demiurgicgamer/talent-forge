@@ -34,67 +34,68 @@ if st.button("🚀 Run AI Career Agent"):
 
     if not final_resume:
         st.error("Please upload a PDF or paste resume text")
+        st.stop()
 
-    else:
-        with st.spinner("Analyzing resume with AI agent..."):
+    with st.spinner("Analyzing resume with AI agent..."):
+        result = run_graph(final_resume)
 
-            result = run_graph(final_resume)
+    st.success("Analysis complete!")
 
-        st.success("Analysis complete!")
+    # -------------------
+    # TOP JOBS
+    # -------------------
+    st.subheader("🏆 Top Matching Jobs")
 
-        # -------------------
-        # BEST JOB (CLEAN UI)
-        # -------------------
-        job = result.get("best_job", {})
+    ranked_jobs = sorted(
+        result["scored_jobs"],
+        key=lambda x: x["score"],
+        reverse=True
+    )
 
-        st.subheader("🏆 Best Job Match")
+    for job in ranked_jobs[:5]:
 
-        col1, col2 = st.columns([2, 1])
+        with st.container():
+            st.markdown(f"### {job['title']}")
+            st.write(job["description"])
 
-        with col1:
-            st.markdown(f"### {job.get('title', 'N/A')}")
-            st.write(job.get("description", "No description available"))
+            col1, col2 = st.columns([1, 3])
 
-        with col2:
-            st.metric("Overall Score", job.get("score", 0))
+            with col1:
+                st.metric("Score", job["score"])
 
-        details = job.get("details", {})
+            with col2:
+                st.markdown(
+                    f"[🚀 Apply Now]({job.get('apply_url', '#')})"
+                )
 
-        st.write("### 📊 Score Breakdown")
+            if job.get("details", {}).get("summary"):
+                st.info(job["details"]["summary"])
 
-        c1, c2, c3, c4 = st.columns(4)
+            st.divider()
 
-        c1.metric("Skills", details.get("skill_match", 0))
-        c2.metric("Domain", details.get("domain_match", 0))
-        c3.metric("Tools", details.get("tools_match", 0))
-        c4.metric("Experience", details.get("experience_match", 0))
+    # -------------------
+    # RANKING TABLE
+    # -------------------
+    st.subheader("📊 Job Rankings")
 
-        if details.get("summary"):
-            st.info(details["summary"])
+    ranked = result.get("scored_jobs", [])
 
-        # -------------------
-        # RANKED JOBS TABLE
-        # -------------------
-        st.subheader("📊 Job Rankings")
+    if ranked:
+        df = pd.DataFrame([
+            {
+                "Job Title": j["title"],
+                "Score": j["score"]
+            }
+            for j in ranked
+        ])
 
-        ranked = result.get("ranked_jobs", [])
+        st.dataframe(df, use_container_width=True)
 
-        if ranked:
-            df = pd.DataFrame([
-                {
-                    "Job Title": j["title"],
-                    "Score": j["score"]
-                }
-                for j in ranked
-            ])
+    # -------------------
+    # GENERATED CONTENT
+    # -------------------
+    st.subheader("📝 Tailored Resume")
+    st.write(result.get("tailored_resume", ""))
 
-            st.dataframe(df, use_container_width=True)
-
-        # -------------------
-        # GENERATED CONTENT
-        # -------------------
-        st.subheader("📝 Tailored Resume")
-        st.write(result.get("tailored_resume", ""))
-
-        st.subheader("📩 Cover Letter")
-        st.write(result.get("cover_letter", ""))
+    st.subheader("📩 Cover Letter")
+    st.write(result.get("cover_letter", ""))
